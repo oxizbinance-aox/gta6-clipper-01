@@ -1,27 +1,73 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
-const repoRoot = resolve(process.cwd());
-const videoPath = join(repoRoot, "VIDEO.json");
-const outDir = resolve(process.env.MAKEFUN_OUTPUT_DIR ?? "out");
+const BOT_DIR = process.env.MAKEFUN_BOT_DIR || "/bot";
+const OUTPUT_DIR = process.env.MAKEFUN_OUTPUT_DIR || "/output";
+const SHORTS_PREFIX = "https://www.youtube.com/shorts/";
+const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 
-const raw = readFileSync(videoPath, "utf8");
-const video = JSON.parse(raw) as { url?: unknown };
-if (
-  typeof video.url !== "string" ||
-  !video.url.startsWith("https://www.youtube.com/shorts/")
-) {
-  throw new Error("VIDEO.json must name a YouTube Shorts url");
+function fail(message: string): never {
+  console.error(`error: ${message}`);
+  process.exit(1);
 }
 
-const videoId = video.url.slice(
-  "https://www.youtube.com/shorts/".length,
-);
-if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
-  throw new Error("VIDEO.json url must carry an 11-character Shorts id");
+const inputPath = join(BOT_DIR, "VIDEO.json");
+
+let raw: string;
+try {
+  raw = readFileSync(inputPath, "utf8");
+} catch (error) {
+  const reason = error instanceof Error ? error.message : String(error);
+  fail(`could not read ${inputPath}: ${reason}`);
 }
 
-mkdirSync(outDir, { recursive: true });
-const target = join(outDir, "VIDEO.json");
-writeFileSync(target, JSON.stringify({ url: video.url }) + "\n");
-console.log(`wrote ${target}`);
+let data: unknown;
+try {
+  data = JSON.parse(raw);
+} catch (error) {
+  const reason = error instanceof Error ? error.message : String(error);
+  fail(`${inputPath} is not valid JSON: ${reason}`);
+}
+
+if (typeof data !== "object" || data === null || Array.isArray(data)) {
+  fail(`${inputPath} must contain a JSON object with a "url" field.`);
+}
+
+const url = (data as { url?: unknown }).url;
+
+if (typeof url !== "string") {
+  fail(`"url" in ${inputPath} must be a string.`);
+}
+
+if (!url.startsWith(SHORTS_PREFIX)) {
+  fail(
+    `"url" must start with ${SHORTS_PREFIX} (got: ${JSON.stringify(url)}).`,
+  );
+}
+
+const videoId = url.slice(SHORTS_PREFIX.length);
+
+if (!VIDEO_ID_PATTERN.test(videoId)) {
+  fail(
+    `video id after ${SHORTS_PREFIX} must be exactly 11 characters ` +
+      `(letters, digits, "_" or "-") (got: ${JSON.stringify(videoId)}).`,
+  );
+}
+
+try {
+  mkdirSync(OUTPUT_DIR, { recursive: true });
+} catch (error) {
+  const reason = error instanceof Error ? error.message : String(error);
+  fail(`could not create output directory ${OUTPUT_DIR}: ${reason}`);
+}
+
+const outputPath = join(OUTPUT_DIR, "VIDEO.json");
+
+try {
+  writeFileSync(outputPath, JSON.stringify({ url }) + "\n", "utf8");
+} catch (error) {
+  const reason = error instanceof Error ? error.message : String(error);
+  fail(`could not write ${outputPath}: ${reason}`);
+}
+
+console.log(`Wrote ${outputPath}`);
